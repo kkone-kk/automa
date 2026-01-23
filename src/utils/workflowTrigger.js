@@ -240,6 +240,7 @@ export async function registerVisitWeb(workflowId, data) {
     console.error(error);
   }
 }
+registerVisitWeb.isSerial = true;
 
 export async function registerKeyboardShortcut(workflowId, data) {
   try {
@@ -253,6 +254,7 @@ export async function registerKeyboardShortcut(workflowId, data) {
     console.error(error);
   }
 }
+registerKeyboardShortcut.isSerial = true;
 
 export async function registerOnStartup() {
   // Do nothing
@@ -285,11 +287,41 @@ export async function registerWorkflowTrigger(workflowId, { data }) {
     await cleanWorkflowTriggers(workflowId, data && data?.triggers);
 
     if (data.triggers) {
+      const promises = [];
+      const triggersByType = {};
+
       for (const trigger of data.triggers) {
-        const handler = workflowTriggersMap[trigger.type];
-        if (handler)
-          await handler(`trigger:${workflowId}:${trigger.id}`, trigger.data);
+        if (!triggersByType[trigger.type]) triggersByType[trigger.type] = [];
+        triggersByType[trigger.type].push(trigger);
       }
+
+      for (const type of Object.keys(triggersByType)) {
+        const typeTriggers = triggersByType[type];
+        const handler = workflowTriggersMap[type];
+
+        if (handler) {
+          if (handler.isSerial) {
+            promises.push(
+              (async () => {
+                for (const trigger of typeTriggers) {
+                  await handler(
+                    `trigger:${workflowId}:${trigger.id}`,
+                    trigger.data
+                  );
+                }
+              })()
+            );
+          } else {
+            typeTriggers.forEach((trigger) => {
+              promises.push(
+                handler(`trigger:${workflowId}:${trigger.id}`, trigger.data)
+              );
+            });
+          }
+        }
+      }
+
+      await Promise.all(promises);
     } else if (workflowTriggersMap[data.type]) {
       await workflowTriggersMap[data.type](workflowId, data);
     }
