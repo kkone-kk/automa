@@ -3,6 +3,37 @@ import dayjs from 'dayjs';
 import browser from 'webextension-polyfill';
 import { isObject } from './helper';
 
+class Mutex {
+  constructor() {
+    this.queue = [];
+    this.locked = false;
+  }
+
+  async run(fn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fn, resolve, reject });
+      this._process();
+    });
+  }
+
+  async _process() {
+    if (this.locked || this.queue.length === 0) return;
+    this.locked = true;
+    const { fn, resolve, reject } = this.queue.shift();
+    try {
+      const result = await fn();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    } finally {
+      this.locked = false;
+      this._process();
+    }
+  }
+}
+
+const storageMutex = new Mutex();
+
 export function registerContextMenu(triggerId, data) {
   return new Promise((resolve, reject) => {
     const documentUrlPatterns = ['https://*/*', 'http://*/*'];
@@ -69,16 +100,18 @@ export function registerContextMenu(triggerId, data) {
 }
 
 async function removeFromWorkflowQueue(workflowId) {
-  const { workflowQueue } = await browser.storage.local.get('workflowQueue');
-  const queueIndex = (workflowQueue || []).findIndex((id) =>
-    id.includes(workflowId)
-  );
+  await storageMutex.run(async () => {
+    const { workflowQueue } = await browser.storage.local.get('workflowQueue');
+    const queueIndex = (workflowQueue || []).findIndex((id) =>
+      id.includes(workflowId)
+    );
 
-  if (!workflowQueue || queueIndex === -1) return;
+    if (!workflowQueue || queueIndex === -1) return;
 
-  workflowQueue.splice(queueIndex, 1);
+    workflowQueue.splice(queueIndex, 1);
 
-  await browser.storage.local.set({ workflowQueue });
+    await browser.storage.local.set({ workflowQueue });
+  });
 }
 
 export async function cleanWorkflowTriggers(workflowId, triggers) {
@@ -90,33 +123,35 @@ export async function cleanWorkflowTriggers(workflowId, triggers) {
       }
     }
 
-    const { visitWebTriggers, onStartupTriggers, shortcuts } =
-      await browser.storage.local.get([
-        'shortcuts',
-        'visitWebTriggers',
-        'onStartupTriggers',
-      ]);
-
-    const keyboardShortcuts = Array.isArray(shortcuts) ? {} : shortcuts || {};
-    Object.keys(keyboardShortcuts).forEach((shortcutId) => {
-      if (!shortcutId.includes(workflowId)) return;
-
-      delete keyboardShortcuts[shortcutId];
-    });
-
-    const startupTriggers = (onStartupTriggers || []).filter(
-      (id) => !id.includes(workflowId)
-    );
-    const filteredVisitWebTriggers = visitWebTriggers?.filter(
-      (item) => !item.id.includes(workflowId)
-    );
-
     await removeFromWorkflowQueue(workflowId);
 
-    await browser.storage.local.set({
-      shortcuts: keyboardShortcuts,
-      onStartupTriggers: startupTriggers,
-      visitWebTriggers: filteredVisitWebTriggers,
+    await storageMutex.run(async () => {
+      const { visitWebTriggers, onStartupTriggers, shortcuts } =
+        await browser.storage.local.get([
+          'shortcuts',
+          'visitWebTriggers',
+          'onStartupTriggers',
+        ]);
+
+      const keyboardShortcuts = Array.isArray(shortcuts) ? {} : shortcuts || {};
+      Object.keys(keyboardShortcuts).forEach((shortcutId) => {
+        if (!shortcutId.includes(workflowId)) return;
+
+        delete keyboardShortcuts[shortcutId];
+      });
+
+      const startupTriggers = (onStartupTriggers || []).filter(
+        (id) => !id.includes(workflowId)
+      );
+      const filteredVisitWebTriggers = visitWebTriggers?.filter(
+        (item) => !item.id.includes(workflowId)
+      );
+
+      await browser.storage.local.set({
+        shortcuts: keyboardShortcuts,
+        onStartupTriggers: startupTriggers,
+        visitWebTriggers: filteredVisitWebTriggers,
+      });
     });
 
     const browserContextMenu =
@@ -217,25 +252,29 @@ export async function registerVisitWeb(workflowId, data) {
   try {
     if (data.url.trim() === '') return;
 
-    const visitWebTriggers =
-      (await browser.storage.local.get('visitWebTriggers'))?.visitWebTriggers ||
-      [];
+    await storageMutex.run(async () => {
+      const visitWebTriggers =
+        (await browser.storage.local.get('visitWebTriggers'))
+          ?.visitWebTriggers || [];
 
-    const index = visitWebTriggers.findIndex((item) => item.id === workflowId);
-    const payload = {
-      id: workflowId,
-      url: data.url,
-      isRegex: data.isUrlRegex,
-      supportSPA: data.supportSPA ?? false,
-    };
+      const index = visitWebTriggers.findIndex(
+        (item) => item.id === workflowId
+      );
+      const payload = {
+        id: workflowId,
+        url: data.url,
+        isRegex: data.isUrlRegex,
+        supportSPA: data.supportSPA ?? false,
+      };
 
-    if (index === -1) {
-      visitWebTriggers.unshift(payload);
-    } else {
-      visitWebTriggers[index] = payload;
-    }
+      if (index === -1) {
+        visitWebTriggers.unshift(payload);
+      } else {
+        visitWebTriggers[index] = payload;
+      }
 
-    await browser.storage.local.set({ visitWebTriggers });
+      await browser.storage.local.set({ visitWebTriggers });
+    });
   } catch (error) {
     console.error(error);
   }
@@ -243,12 +282,14 @@ export async function registerVisitWeb(workflowId, data) {
 
 export async function registerKeyboardShortcut(workflowId, data) {
   try {
-    const { shortcuts } = await browser.storage.local.get('shortcuts');
-    const keyboardShortcuts = Array.isArray(shortcuts) ? {} : shortcuts || {};
+    await storageMutex.run(async () => {
+      const { shortcuts } = await browser.storage.local.get('shortcuts');
+      const keyboardShortcuts = Array.isArray(shortcuts) ? {} : shortcuts || {};
 
-    keyboardShortcuts[workflowId] = data.shortcut;
+      keyboardShortcuts[workflowId] = data.shortcut;
 
-    await browser.storage.local.set({ shortcuts: keyboardShortcuts });
+      await browser.storage.local.set({ shortcuts: keyboardShortcuts });
+    });
   } catch (error) {
     console.error(error);
   }
