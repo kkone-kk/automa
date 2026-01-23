@@ -15,7 +15,7 @@ const checkPermission = (permissions) =>
 const requiredPermissions = {
   trigger: {
     name: contextMenuPermission,
-    hasPermission({ data }) {
+    getPermissions({ data }) {
       const permissions = [];
 
       if (data.triggers) {
@@ -28,41 +28,41 @@ const requiredPermissions = {
         permissions.push(contextMenuPermission);
       }
 
-      return checkPermission(permissions);
+      return permissions;
     },
   },
   clipboard: {
     name: 'clipboardRead',
-    hasPermission() {
+    getPermissions() {
       const clipboardPermissions = ['clipboardRead'];
       if (BROWSER_TYPE === 'firefox')
         clipboardPermissions.push('clipboardWrite');
 
-      return checkPermission(clipboardPermissions);
+      return clipboardPermissions;
     },
   },
   notification: {
     name: 'notifications',
-    hasPermission() {
-      return checkPermission(['notifications']);
+    getPermissions() {
+      return ['notifications'];
     },
   },
   'handle-download': {
     name: 'downloads',
-    hasPermission() {
-      return checkPermission(['downloads']);
+    getPermissions() {
+      return ['downloads'];
     },
   },
   'save-assets': {
     name: 'downloads',
-    hasPermission() {
-      return checkPermission(['downloads']);
+    getPermissions() {
+      return ['downloads'];
     },
   },
   cookie: {
     name: 'cookies',
-    hasPermission() {
-      return checkPermission(['cookies']);
+    getPermissions() {
+      return ['cookies'];
     },
   },
 };
@@ -79,15 +79,34 @@ export async function getWorkflowPermissions(drawflow) {
     blocks = Object.values(drawflowData.drawflow?.Home?.data || {});
   }
 
+  const permissionsToVerify = new Map();
+
   for (const block of blocks) {
     const name = block.label || block.name;
     const permission = requiredPermissions[name];
 
-    if (permission && !permissions.includes(permission.name)) {
-      const hasPermission = await permission.hasPermission(block);
-      if (!hasPermission) permissions.push(permission.name);
+    if (permission) {
+      const blockPermissions = permission.getPermissions(block);
+      if (blockPermissions.length > 0) {
+        if (!permissionsToVerify.has(permission.name)) {
+          permissionsToVerify.set(permission.name, new Set());
+        }
+        blockPermissions.forEach((p) =>
+          permissionsToVerify.get(permission.name).add(p)
+        );
+      }
     }
   }
+
+  await Promise.all(
+    Array.from(permissionsToVerify.entries()).map(
+      async ([name, requiredSet]) => {
+        const requiredList = Array.from(requiredSet);
+        const hasPermission = await checkPermission(requiredList);
+        if (!hasPermission) permissions.push(name);
+      }
+    )
+  );
 
   return permissions;
 }
