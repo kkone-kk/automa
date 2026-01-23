@@ -21,7 +21,7 @@ function isValidURL(url) {
 async function newTab({ id, data }) {
   if (this.windowId) {
     try {
-      // FIXME: ??? query info but do not use it
+      // Check if the window exists. If not, it throws an error.
       await BrowserAPIService.windows.get(this.windowId);
     } catch (error) {
       this.windowId = null;
