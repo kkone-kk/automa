@@ -171,9 +171,8 @@ class BackgroundWorkflowTriggers {
       );
     }
 
-    for (const currWorkflow of workflowsArr) {
-      // eslint-disable-next-line no-continue
-      if (currWorkflow.isDisabled) continue;
+    const promises = workflowsArr.map(async (currWorkflow) => {
+      if (currWorkflow.isDisabled) return;
 
       let triggerBlock = currWorkflow.trigger;
 
@@ -193,7 +192,9 @@ class BackgroundWorkflowTriggers {
           if (isStartup && triggerBlock.triggers) {
             for (const trigger of triggerBlock.triggers) {
               if (trigger.type === 'on-startup') {
-                await BackgroundWorkflowUtils.executeWorkflow(currWorkflow);
+                await BackgroundWorkflowUtils.instance.executeWorkflow(
+                  currWorkflow
+                );
               }
             }
           }
@@ -203,7 +204,9 @@ class BackgroundWorkflowTriggers {
           });
         }
       }
-    }
+    });
+
+    await Promise.all(promises);
   }
 }
 
