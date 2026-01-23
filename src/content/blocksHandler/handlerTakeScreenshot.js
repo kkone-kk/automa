@@ -52,8 +52,10 @@ function loadAsyncImg(src) {
     image.src = src;
   });
 }
-async function takeScreenshot(tabId, options) {
-  await sendMessage('set:active-tab', tabId, 'background');
+async function takeScreenshot(tabId, options, setActiveTab = true) {
+  if (setActiveTab) {
+    await sendMessage('set:active-tab', tabId, 'background');
+  }
   const imageUrl = await sendMessage(
     'get:tab-screenshot',
     options,
@@ -191,8 +193,10 @@ export default async function ({
 
   if (scrollableElement.tagName === 'HTML') scrollableElement = window;
 
+  await sendMessage('set:active-tab', tabId, 'background');
+
   while (scrollPosition <= originalScrollHeight) {
-    const imageUrl = await takeScreenshot(tabId, options);
+    const imageUrl = await takeScreenshot(tabId, options, false);
 
     if (scrollPosition > 0 && !document.body.classList.contains('hide-fixed')) {
       document.body.classList.add('hide-fixed');
